@@ -1,128 +1,81 @@
-// server.js
+// server.js - Versión final con conexión a MySQL
 
-// 1. Importar las librerías necesarias
 const express = require('express');
 const cors = require('cors');
+const mysql = require('mysql2/promise');
 
-// 2. Inicializar la aplicación de Express
 const app = express();
-const PORT = 3000; // El puerto en el que correrá nuestro servidor
+const PORT = 3000;
 
-// 3. Middlewares
-// CORS: Permite que nuestro frontend (que corre en un origen diferente) haga peticiones a este backend.
+// !! IMPORTANTE: CONFIGURA TU CONEXIÓN A LA BASE DE DATOS !!
+const dbConfig = {
+    host: 'localhost',
+    user: 'root',
+    // Por defecto, la contraseña de MySQL en XAMPP está vacía.
+    // Si estableciste una, ponla aquí. Si no, déjalo como ''.
+    password: '',
+    database: 'kanban_db'
+};
+
+const pool = mysql.createPool(dbConfig);
+
 app.use(cors());
-// express.json(): Permite al servidor entender y procesar datos en formato JSON que vengan en las peticiones.
 app.use(express.json());
 
-// 4. Base de datos simulada en memoria
-// En una aplicación real, esto estaría en una base de datos como MongoDB, PostgreSQL, etc.
-// Cada tarea es un objeto con id, texto y estado ('pending' o 'inProgress').
-let tasks = [
-    { id: 1, text: 'Configurar el entorno de Node.js', status: 'inProgress' },
-    { id: 2, text: 'Crear el primer endpoint GET', status: 'pending' },
-    { id: 3, text: 'Conectar el frontend', status: 'pending' },
-];
-let nextTaskId = 4; // Para asignar IDs únicos a las nuevas tareas
+// --- ENDPOINTS DE LA API ---
 
-// 5. Definición de las Rutas (Endpoints) de nuestra API
-
-/**
- * [GET] /tasks - Obtener tareas con paginación.
- * Permite filtrar por estado (status) y paginar los resultados.
- * Query params:
- * - status: 'pending' o 'inProgress' (requerido)
- * - page: número de página (ej: 1, 2, 3...)
- * - limit: cuántos items por página
- */
-app.get('/tasks', (req, res) => {
+// [GET] /tasks
+app.get('/tasks', async (req, res) => {
     const { status, page = 1, limit = 5 } = req.query;
+    if (!status) return res.status(400).json({ message: 'El parámetro "status" es requerido.' });
 
-    if (!status) {
-        return res.status(400).json({ message: 'El parámetro "status" es requerido.' });
+    try {
+        const offset = (page - 1) * limit;
+        const [countResult] = await pool.query('SELECT COUNT(*) as total FROM tasks WHERE status = ?', [status]);
+        const totalTasks = countResult[0].total;
+        const totalPages = Math.ceil(totalTasks / limit);
+        const [tasks] = await pool.query('SELECT * FROM tasks WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?', [status, parseInt(limit), parseInt(offset)]);
+
+        res.json({ tasks, currentPage: parseInt(page), totalPages });
+    } catch (error) {
+        console.error('Error al obtener tareas:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    // Filtrar las tareas por el estado solicitado
-    const filteredTasks = tasks.filter(task => task.status === status);
-
-    // Calcular la paginación
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedTasks = filteredTasks.slice(startIndex, endIndex);
-    
-    const totalPages = Math.ceil(filteredTasks.length / limit);
-
-    // Enviar la respuesta
-    res.json({
-        tasks: paginatedTasks,
-        currentPage: parseInt(page),
-        totalPages: totalPages
-    });
 });
 
-/**
- * [POST] /tasks - Crear una nueva tarea.
- * La nueva tarea siempre se crea con estado 'pending'.
- */
-app.post('/tasks', (req, res) => {
+// [POST] /tasks
+app.post('/tasks', async (req, res) => {
     const { text } = req.body;
+    if (!text || text.trim() === '') return res.status(400).json({ message: 'El texto no puede estar vacío.' });
 
-    if (!text || text.trim() === '') {
-        return res.status(400).json({ message: 'El texto de la tarea no puede estar vacío.' });
+    try {
+        const [result] = await pool.query("INSERT INTO tasks (text, status) VALUES (?, 'pending')", [text]);
+        const [newTask] = await pool.query('SELECT * FROM tasks WHERE id = ?', [result.insertId]);
+        res.status(201).json(newTask[0]);
+    } catch (error) {
+        console.error('Error al crear la tarea:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    const newTask = {
-        id: nextTaskId++,
-        text: text,
-        status: 'pending'
-    };
-
-    tasks.push(newTask);
-    console.log('Tarea creada:', newTask);
-    res.status(201).json(newTask); // 201 = Creado exitosamente
 });
 
-/**
- * [PUT] /tasks/:id - Editar una tarea (principalmente para cambiar su estado).
- */
-app.put('/tasks/:id', (req, res) => {
+// [PUT] /tasks/:id
+app.put('/tasks/:id', async (req, res) => {
     const taskId = parseInt(req.params.id);
-    const { status, text } = req.body; // Aceptamos cambiar estado o texto
+    const { status } = req.body;
+    if (!status) return res.status(400).json({ message: 'El campo "status" es requerido.' });
 
-    const taskIndex = tasks.findIndex(t => t.id === taskId);
-
-    if (taskIndex === -1) {
-        return res.status(404).json({ message: 'Tarea no encontrada.' }); // 404 = No encontrado
+    try {
+        const [result] = await pool.query('UPDATE tasks SET status = ? WHERE id = ?', [status, taskId]);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Tarea no encontrada.' });
+        const [updatedTask] = await pool.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
+        res.json(updatedTask[0]);
+    } catch (error) {
+        console.error('Error al actualizar la tarea:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    // Actualizar los campos que se hayan enviado
-    if (status) {
-        tasks[taskIndex].status = status;
-    }
-    if (text) {
-        tasks[taskIndex].text = text;
-    }
-
-    console.log('Tarea actualizada:', tasks[taskIndex]);
-    res.json(tasks[taskIndex]);
-});
-
-/**
- * [DELETE] /tasks/:id - Eliminar una tarea.
- */
-app.delete('/tasks/:id', (req, res) => {
-    const taskId = parseInt(req.params.id);
-    const initialLength = tasks.length;
-    tasks = tasks.filter(t => t.id !== taskId);
-
-    if (tasks.length === initialLength) {
-        return res.status(404).json({ message: 'Tarea no encontrada.' });
-    }
-
-    console.log('Tarea eliminada, ID:', taskId);
-    res.status(204).send(); // 204 = Sin contenido (éxito pero no se devuelve nada)
 });
 
 // 6. Iniciar el servidor
 app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`✅ Servidor corriendo en http://localhost:${PORT} y conectado a MySQL.`);
 });

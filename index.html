@@ -91,314 +91,204 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // --- STATE MANAGEMENT ---
-            const kanbanItemsPerPage = 5;
-            let kanbanPendingPage = 1;
-            let kanbanInProgressPage = 1;
-            
-            let paginatedViewCurrentPage = 1;
-            const paginatedViewItemsPerPage = 6;
-            let currentLayout = 'list';
+    // --- CONFIGURACIÓN ---
+    const API_URL = 'http://localhost:3000'; // La dirección de nuestro servidor
+    const KANBAN_ITEMS_PER_PAGE = 5;
 
-            // --- DOM ELEMENT SELECTION ---
-            const kanbanView = document.getElementById('kanban-view');
-            const paginatedView = document.getElementById('paginated-view');
-            const showKanbanBtn = document.getElementById('showKanbanBtn');
-            const showPaginatedBtn = document.getElementById('showPaginatedBtn');
-            const pendingList = document.getElementById('pending-list');
-            const inProgressList = document.getElementById('inprogress-list');
-            const pendingPagination = document.getElementById('pending-pagination');
-            const inProgressPagination = document.getElementById('inprogress-pagination');
-            const paginatedTaskList = document.getElementById('paginated-task-list');
-            const paginationControls = document.getElementById('pagination-controls');
-            const layoutListBtn = document.getElementById('layout-list-btn');
-            const layoutGridBtn = document.getElementById('layout-grid-btn');
-            
-            const openModalBtn = document.getElementById('openModalBtn');
-            const closeModalBtn = document.getElementById('closeModalBtn');
-            const taskModal = document.getElementById('taskModal');
-            const modalContent = document.getElementById('modalContent');
-            const createTaskBtn = document.getElementById('createTaskBtn');
-            const taskInput = document.getElementById('taskDescription');
+    // --- ESTADO DE LA APLICACIÓN ---
+    let kanbanState = {
+        pending: { currentPage: 1, totalPages: 1 },
+        inProgress: { currentPage: 1, totalPages: 1 }
+    };
 
-            // --- DATA HANDLING ---
-            const getBoardData = () => JSON.parse(localStorage.getItem('kanbanBoard')) || { pending: [], inProgress: [] };
-            const saveBoardData = (data) => localStorage.setItem('kanbanBoard', JSON.stringify(data));
+    // --- SELECTORES DE ELEMENTOS DEL DOM ---
+    const pendingList = document.getElementById('pending-list');
+    const inProgressList = document.getElementById('inprogress-list');
+    const pendingPagination = document.getElementById('pending-pagination');
+    const inProgressPagination = document.getElementById('inprogress-pagination');
+    const openModalBtn = document.getElementById('openModalBtn');
+    const closeModalBtn = document.getElementById('closeModalBtn');
+    const taskModal = document.getElementById('taskModal');
+    const modalContent = document.getElementById('modalContent');
+    const createTaskBtn = document.getElementById('createTaskBtn');
+    const taskInput = document.getElementById('taskDescription');
+    // ... (los otros selectores de vistas paginadas no los tocaremos ahora)
 
-            // --- VIEW SWITCHING LOGIC ---
-            const switchView = (viewToShow) => {
-                const isKanban = viewToShow === 'kanban';
-                kanbanView.classList.toggle('hidden', !isKanban);
-                paginatedView.classList.toggle('hidden', isKanban);
-                
-                showKanbanBtn.classList.toggle('bg-blue-500', isKanban);
-                showKanbanBtn.classList.toggle('text-white', isKanban);
-                showPaginatedBtn.classList.toggle('bg-blue-500', !isKanban);
-                showPaginatedBtn.classList.toggle('text-white', !isKanban);
+    // --- NUEVO: FUNCIONES PARA HABLAR CON LA API (EL SERVIDOR) ---
 
-                if (isKanban) {
-                    renderKanbanBoard();
-                } else {
-                    renderPaginatedView();
-                }
+    /**
+     * Busca las tareas de una columna específica en el servidor.
+     * @param {string} status - 'pending' o 'inProgress'.
+     * @param {number} page - El número de página a solicitar.
+     * @returns {Promise<Object>} Los datos de la API (tareas, totalPages, etc).
+     */
+    async function fetchTasks(status, page) {
+        try {
+            const response = await fetch(`${API_URL}/tasks?status=${status}&page=${page}&limit=${KANBAN_ITEMS_PER_PAGE}`);
+            if (!response.ok) throw new Error('Error al cargar las tareas');
+            return await response.json();
+        } catch (error) {
+            console.error(error);
+            alert('No se pudieron cargar las tareas. ¿Iniciaste el servidor?');
+            return { tasks: [], totalPages: 1, currentPage: 1 };
+        }
+    }
+
+    /**
+     * Envía una nueva tarea al servidor para ser creada.
+     * @param {string} text - El texto de la nueva tarea.
+     */
+    async function createTask(text) {
+        try {
+            await fetch(`${API_URL}/tasks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+        } catch (error) {
+            console.error('Error al crear la tarea:', error);
+            alert('No se pudo crear la tarea.');
+        }
+    }
+
+    /**
+     * Actualiza el estado de una tarea (la mueve de columna).
+     * @param {number} taskId - El ID de la tarea a mover.
+     * @param {string} newStatus - El nuevo estado: 'pending' o 'inProgress'.
+     */
+    async function updateTaskStatus(taskId, newStatus) {
+        try {
+            await fetch(`${API_URL}/tasks/${taskId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            });
+        } catch (error) {
+            console.error('Error al mover la tarea:', error);
+            alert('No se pudo mover la tarea.');
+        }
+    }
+
+    // --- LÓGICA PARA RENDERIZAR EL TABLERO ---
+
+    /**
+     * Dibuja el tablero Kanban completo, pidiendo los datos al servidor.
+     */
+    async function renderKanbanBoard() {
+        // Cargar y mostrar la columna de PENDIENTES
+        const pendingData = await fetchTasks('pending', kanbanState.pending.currentPage);
+        kanbanState.pending.totalPages = pendingData.totalPages;
+        pendingList.innerHTML = '';
+        pendingData.tasks.forEach(task => pendingList.appendChild(createTaskElement(task)));
+        renderPagination('pending', pendingPagination);
+
+        // Cargar y mostrar la columna de EN PROCESO
+        const inProgressData = await fetchTasks('inProgress', kanbanState.inProgress.currentPage);
+        kanbanState.inProgress.totalPages = inProgressData.totalPages;
+        inProgressList.innerHTML = '';
+        inProgressData.tasks.forEach(task => inProgressList.appendChild(createTaskElement(task)));
+        renderPagination('inProgress', inProgressPagination);
+    }
+
+    /**
+     * Crea un elemento de tarea para el DOM.
+     * @param {Object} task - El objeto de tarea con {id, text, status}.
+     * @returns {HTMLElement} El div de la tarea.
+     */
+    function createTaskElement(task) {
+        const item = document.createElement('div');
+        item.className = 'task-item bg-white p-3 rounded-md shadow-sm border border-gray-200';
+        item.textContent = task.text;
+        item.dataset.taskId = task.id; // ¡Muy importante! Guardamos el ID aquí.
+        return item;
+    }
+
+    /**
+     * Dibuja los controles de paginación para una columna.
+     */
+    function renderPagination(status, container) {
+        const state = kanbanState[status];
+        container.innerHTML = '';
+        if (state.totalPages <= 1) return;
+
+        for (let i = 1; i <= state.totalPages; i++) {
+            const pageBtn = document.createElement('button');
+            pageBtn.textContent = i;
+            pageBtn.className = `w-8 h-8 rounded-md text-sm font-semibold ${state.currentPage === i ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`;
+            pageBtn.onclick = () => {
+                state.currentPage = i;
+                renderKanbanBoard();
             };
+            container.appendChild(pageBtn);
+        }
+    }
 
-            // --- KANBAN VIEW LOGIC ---
-            const renderKanbanBoard = () => {
-                const data = getBoardData();
-                
-                // Paginate and render PENDING column
-                const pendingStartIndex = (kanbanPendingPage - 1) * kanbanItemsPerPage;
-                const pendingEndIndex = pendingStartIndex + kanbanItemsPerPage;
-                const paginatedPending = data.pending.slice(pendingStartIndex, pendingEndIndex);
-                
-                pendingList.innerHTML = '';
-                paginatedPending.forEach(text => pendingList.appendChild(createTaskElement(text)));
-                renderKanbanPagination('pending', data.pending.length, kanbanPendingPage, pendingPagination);
+    // --- LÓGICA DEL MODAL Y CREACIÓN DE TAREAS ---
+    const openModal = () => {
+        taskModal.classList.remove('invisible', 'opacity-0');
+        modalContent.classList.remove('scale-95');
+        taskInput.focus();
+    };
+    const closeModal = () => {
+        taskModal.classList.add('invisible', 'opacity-0');
+        modalContent.classList.add('scale-95');
+        taskInput.value = '';
+    };
 
-                // Paginate and render IN-PROGRESS column
-                const inProgressStartIndex = (kanbanInProgressPage - 1) * kanbanItemsPerPage;
-                const inProgressEndIndex = inProgressStartIndex + kanbanItemsPerPage;
-                const paginatedInProgress = data.inProgress.slice(inProgressStartIndex, inProgressEndIndex);
-
-                inProgressList.innerHTML = '';
-                paginatedInProgress.forEach(text => inProgressList.appendChild(createTaskElement(text)));
-                renderKanbanPagination('inProgress', data.inProgress.length, kanbanInProgressPage, inProgressPagination);
-            };
-            
-            const createTaskElement = (text) => {
-                const item = document.createElement('div');
-                item.className = 'task-item bg-white p-3 rounded-md shadow-sm border border-gray-200';
-                item.textContent = text;
-                return item;
-            };
-
-            const renderKanbanPagination = (columnType, totalItems, currentPage, container) => {
-                container.innerHTML = '';
-                const totalPages = Math.ceil(totalItems / kanbanItemsPerPage);
-                if (totalPages <= 1) return;
-
-                for (let i = 1; i <= totalPages; i++) {
-                    const pageBtn = document.createElement('button');
-                    pageBtn.textContent = i;
-                    pageBtn.className = `w-8 h-8 rounded-md text-sm font-semibold ${currentPage === i ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'}`;
-                    pageBtn.onclick = () => {
-                        if (columnType === 'pending') {
-                            kanbanPendingPage = i;
-                        } else {
-                            kanbanInProgressPage = i;
-                        }
-                        renderKanbanBoard();
-                    };
-                    container.appendChild(pageBtn);
-                }
-            };
-
-            // --- DRAG AND DROP LOGIC ---
-            const initDragAndDrop = () => {
-                const options = {
-                    group: 'tasks',
-                    animation: 150,
-                    ghostClass: 'sortable-ghost',
-                    chosenClass: 'sortable-chosen',
-                    onEnd: updateDataFromDOM
-                };
-                Sortable.create(pendingList, options);
-                Sortable.create(inProgressList, options);
-            };
-
-            const updateDataFromDOM = () => {
-                // This function now needs to get ALL tasks, not just the visible ones.
-                // It's simpler to re-read from localStorage, update, save, and re-render.
-                const data = getBoardData();
-
-                const pendingTasksOnScreen = Array.from(pendingList.children).map(item => item.textContent);
-                const inProgressTasksOnScreen = Array.from(inProgressList.children).map(item => item.textContent);
-                
-                // Reconstruct the full lists
-                const newPending = [...data.pending];
-                const newInProgress = [...data.inProgress];
-
-                // This logic is complex. A simpler approach is to rebuild the arrays from the DOM,
-                // but that only works if all items are in the DOM. With pagination, they are not.
-                // The most robust way is to find what moved where, but SortableJS doesn't tell us directly.
-                
-                // **Simplified approach for this example**: we will rebuild the data from the DOM,
-                // which means drag-and-drop will only work for items currently visible on the page.
-                // A full solution would require a more complex state management.
-                
-                // Let's get the full lists from the DOM before SortableJS re-arranges them visually
-                // This is a limitation. For a truly robust solution, one would use a library like React or Vue.
-                
-                // The onEnd event gives us the new state of the visible items.
-                // We need to update the main data array.
-                // For simplicity, we'll just re-read the DOM and save. This means drag-drop across pages is not possible.
-                const newPendingData = Array.from(document.getElementById('pending-list').children).map(t => t.textContent);
-                const newInProgressData = Array.from(document.getElementById('inprogress-list').children).map(t => t.textContent);
-
-                // This is a naive update and will lose tasks on other pages.
-                // Let's fix this. We need to get the moved item and update the original full arrays.
-                // SortableJS `onEnd` event provides `evt.oldIndex`, `evt.newIndex`, `evt.from`, `evt.to`.
-                
-                // Let's rewrite the onEnd handler.
-                Sortable.create(pendingList, {
-                    group: 'tasks', animation: 150, ghostClass: 'sortable-ghost',
-                    onEnd: (evt) => handleDragEnd(evt, 'pending')
-                });
-                Sortable.create(inProgressList, {
-                    group: 'tasks', animation: 150, ghostClass: 'sortable-ghost',
-                    onEnd: (evt) => handleDragEnd(evt, 'inProgress')
-                });
-            };
-            
-            const handleDragEnd = (evt) => {
-                const data = getBoardData();
-                const fromListId = evt.from.id;
-                const toListId = evt.to.id;
-                const oldIndex = evt.oldIndex;
-                const newIndex = evt.newIndex;
-
-                const fromPageIndex = fromListId === 'pending-list' ? kanbanPendingPage : kanbanInProgressPage;
-                const toPageIndex = toListId === 'pending-list' ? kanbanPendingPage : kanbanInProgressPage;
-
-                const absoluteOldIndex = ((fromPageIndex - 1) * kanbanItemsPerPage) + oldIndex;
-                const absoluteNewIndex = ((toPageIndex - 1) * kanbanItemsPerPage) + newIndex;
-
-                let sourceArray = fromListId === 'pending-list' ? data.pending : data.inProgress;
-                let targetArray = toListId === 'pending-list' ? data.pending : data.inProgress;
-
-                // Remove item from source array
-                const [movedItem] = sourceArray.splice(absoluteOldIndex, 1);
-                
-                // Add item to target array
-                targetArray.splice(absoluteNewIndex, 0, movedItem);
-
-                // Adjust current page if a list becomes empty
-                if (Math.ceil(data.pending.length / kanbanItemsPerPage) < kanbanPendingPage) {
-                    kanbanPendingPage = Math.max(1, kanbanPendingPage - 1);
-                }
-                 if (Math.ceil(data.inProgress.length / kanbanItemsPerPage) < kanbanInProgressPage) {
-                    kanbanInProgressPage = Math.max(1, kanbanInProgressPage - 1);
-                }
-
-                saveBoardData(data);
-                renderKanbanBoard(); // Re-render the entire board from the updated data
-            };
-
-
-            // --- PAGINATED VIEW LOGIC ---
-            const renderPaginatedView = () => {
-                const data = getBoardData();
-                const allTasks = [...data.pending, ...data.inProgress];
-                paginatedTaskList.innerHTML = '';
-
-                paginatedTaskList.className = currentLayout === 'grid' 
-                    ? 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4' 
-                    : 'space-y-3';
-                
-                const startIndex = (paginatedViewCurrentPage - 1) * paginatedViewItemsPerPage;
-                const endIndex = startIndex + paginatedViewItemsPerPage;
-                const paginatedTasks = allTasks.slice(startIndex, endIndex);
-
-                if (paginatedTasks.length === 0 && paginatedViewCurrentPage > 1) {
-                    paginatedViewCurrentPage--;
-                    renderPaginatedView();
-                    return;
-                }
-
-                paginatedTasks.forEach(text => {
-                    const item = document.createElement('div');
-                    item.className = 'bg-gray-50 p-4 rounded-lg shadow-sm border';
-                    item.textContent = text;
-                    paginatedTaskList.appendChild(item);
-                });
-                
-                renderPaginatedViewControls(allTasks.length);
-            };
-
-            const renderPaginatedViewControls = (totalItems) => {
-                const totalPages = Math.ceil(totalItems / paginatedViewItemsPerPage);
-                paginationControls.innerHTML = '';
-                if (totalPages <= 1) return;
-
-                const prevBtn = document.createElement('button');
-                prevBtn.textContent = 'Anterior';
-                prevBtn.className = 'px-4 py-2 bg-gray-200 rounded-md disabled:opacity-50';
-                prevBtn.disabled = paginatedViewCurrentPage === 1;
-                prevBtn.onclick = () => { paginatedViewCurrentPage--; renderPaginatedView(); };
-                paginationControls.appendChild(prevBtn);
-
-                const pageInfo = document.createElement('span');
-                pageInfo.textContent = `Página ${paginatedViewCurrentPage} de ${totalPages}`;
-                pageInfo.className = 'text-sm text-gray-700';
-                paginationControls.appendChild(pageInfo);
-
-                const nextBtn = document.createElement('button');
-                nextBtn.textContent = 'Siguiente';
-                nextBtn.className = 'px-4 py-2 bg-gray-200 rounded-md disabled:opacity-50';
-                nextBtn.disabled = paginatedViewCurrentPage === totalPages;
-                nextBtn.onclick = () => { paginatedViewCurrentPage++; renderPaginatedView(); };
-                paginationControls.appendChild(nextBtn);
-            };
-            
-            const changeLayout = (layout) => {
-                currentLayout = layout;
-                layoutListBtn.classList.toggle('bg-blue-500', layout === 'list');
-                layoutListBtn.classList.toggle('text-white', layout === 'list');
-                layoutGridBtn.classList.toggle('bg-blue-500', layout === 'grid');
-                layoutGridBtn.classList.toggle('text-white', layout === 'grid');
-                renderPaginatedView();
-            };
-
-            // --- MODAL AND TASK CREATION LOGIC ---
-            const openModal = () => {
-                taskModal.classList.remove('invisible', 'opacity-0');
-                modalContent.classList.remove('scale-95');
-                taskInput.focus();
-            };
-            const closeModal = () => {
-                taskModal.classList.add('invisible', 'opacity-0');
-                modalContent.classList.add('scale-95');
-                taskInput.value = '';
-            };
-            const addTask = () => {
-                const taskText = taskInput.value.trim();
-                if (taskText) {
-                    const data = getBoardData();
-                    data.pending.push(taskText);
-                    // Go to the last page of the pending column to see the new task
-                    kanbanPendingPage = Math.ceil(data.pending.length / kanbanItemsPerPage) || 1;
-                    saveBoardData(data);
-                    renderKanbanBoard();
-                    closeModal();
-                }
-            };
-            
-            // --- EVENT LISTENERS ---
-            showKanbanBtn.addEventListener('click', () => switchView('kanban'));
-            showPaginatedBtn.addEventListener('click', () => switchView('paginated'));
-            layoutListBtn.addEventListener('click', () => changeLayout('list'));
-            layoutGridBtn.addEventListener('click', () => changeLayout('grid'));
-            openModalBtn.addEventListener('click', openModal);
-            closeModalBtn.addEventListener('click', closeModal);
-            createTaskBtn.addEventListener('click', addTask);
-            taskModal.addEventListener('click', (e) => e.target === taskModal && closeModal());
-
-            // --- INITIALIZATION ---
-            // The drag and drop init needs to be more robust for pagination
-            // Let's rewrite the init logic for Sortable
-            const createSortable = (element) => {
-                Sortable.create(element, {
-                    group: 'tasks',
-                    animation: 150,
-                    ghostClass: 'sortable-ghost',
-                    onEnd: handleDragEnd
-                });
-            };
-            createSortable(pendingList);
-            createSortable(inProgressList);
+    /**
+     * Maneja la creación de una nueva tarea.
+     */
+    async function handleAddTask() {
+        const taskText = taskInput.value.trim();
+        if (taskText) {
+            await createTask(taskText);
+            // Ir a la primera página de pendientes para ver la nueva tarea
+            kanbanState.pending.currentPage = 1;
             renderKanbanBoard();
-        });
+            closeModal();
+        }
+    }
+
+    // --- LÓGICA DE DRAG AND DROP ---
+    
+    /**
+     * Se ejecuta cuando terminas de arrastrar una tarea.
+     * @param {Event} evt - El evento que proporciona SortableJS.
+     */
+    async function handleDragEnd(evt) {
+        const taskId = evt.item.dataset.taskId;
+        const newStatus = evt.to.id === 'pending-list' ? 'pending' : 'inProgress';
+
+        // Manda la actualización al servidor
+        await updateTaskStatus(taskId, newStatus);
+        
+        // Vuelve a dibujar todo el tablero con los datos actualizados del servidor
+        renderKanbanBoard();
+    }
+    
+    /**
+     * Inicializa las columnas para que sean arrastrables.
+     */
+    function initDragAndDrop() {
+        const options = {
+            group: 'tasks',
+            animation: 150,
+            ghostClass: 'sortable-ghost',
+            onEnd: handleDragEnd
+        };
+        Sortable.create(pendingList, options);
+        Sortable.create(inProgressList, options);
+    }
+
+    // --- INICIALIZACIÓN Y EVENTOS ---
+    openModalBtn.addEventListener('click', openModal);
+    closeModalBtn.addEventListener('click', closeModal);
+    createTaskBtn.addEventListener('click', handleAddTask);
+    taskModal.addEventListener('click', (e) => e.target === taskModal && closeModal());
+
+    initDragAndDrop();
+    renderKanbanBoard(); // Carga inicial de datos
+});
     </script>
 </body>
 </html>
