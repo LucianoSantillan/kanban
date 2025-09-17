@@ -4,29 +4,35 @@ import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 
 const API_URL = 'http://localhost:3000';
 
+// Configuración de las 6 columnas
+const columnConfig = {
+  'To do': { name: 'To Do' },
+  'blocked': { name: 'Blocked' },
+  'In progress': { name: 'In Progress' },
+  'Ready for review': { name: 'Ready for Review' },
+  'NO QA': { name: 'NO QA' },
+  'READY FOR TESTING': { name: 'Ready for Testing' },
+  'DONE': { name: 'Done' },
+};
+
+const firstColumnId = Object.keys(columnConfig)[0];
+
 function App() {
-  const [columns, setColumns] = useState({
-    pending: { name: 'Pendientes', items: [] },
-    inProgress: { name: 'En Proceso', items: [] },
-  });
+  const [columns, setColumns] = useState({});
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newTaskText, setNewTaskText] = useState('');
 
-  // --- Funciones para interactuar con el Backend ---
   const fetchAllTasks = async () => {
     try {
-      const [pendingResponse, inProgressResponse] = await Promise.all([
-        fetch(`${API_URL}/tasks?status=pending&limit=100`),
-        fetch(`${API_URL}/tasks?status=inProgress&limit=100`)
-      ]);
-      const pendingData = await pendingResponse.json();
-      const inProgressData = await inProgressResponse.json();
-      setColumns({
-        pending: { name: 'Pendientes', items: pendingData.tasks },
-        inProgress: { name: 'En Proceso', items: inProgressData.tasks },
-      });
+      const newColumns = {};
+      for (const status in columnConfig) {
+        const response = await fetch(`${API_URL}/tasks?status=${status}&limit=100`);
+        const data = await response.json();
+        newColumns[status] = { name: columnConfig[status].name, items: data.tasks || [] };
+      }
+      setColumns(newColumns);
     } catch (error) {
-      console.error("No se pudieron cargar las tareas. Revisa que el backend esté funcionando.", error);
+      console.error("Error al cargar tareas. Revisa que el backend esté funcionando.", error);
     }
   };
 
@@ -41,7 +47,7 @@ function App() {
       console.error("Error al actualizar la tarea.", error);
     }
   };
-
+  
   const addTaskOnServer = async (text) => {
     try {
       await fetch(`${API_URL}/tasks`, {
@@ -58,89 +64,74 @@ function App() {
     fetchAllTasks();
   }, []);
 
-// --- Función principal que se ejecuta al soltar una tarea ---
-const onDragEnd = (result) => {
+  const onDragEnd = (result) => {
     const { source, destination, draggableId } = result;
-
-    // 1. Si se suelta fuera de una columna, no hacer nada
-    if (!destination) {
-        return;
-    }
+    if (!destination) return;
 
     const startColumnId = source.droppableId;
     const endColumnId = destination.droppableId;
-
     const startColumn = columns[startColumnId];
     const endColumn = columns[endColumnId];
 
-    // 2. Si se mueve dentro de la misma columna
     if (startColumn === endColumn) {
-        const newItems = Array.from(startColumn.items);
-        const [reorderedItem] = newItems.splice(source.index, 1);
-        newItems.splice(destination.index, 0, reorderedItem);
-
-        // Actualizar el estado de esa columna
-        const newColumn = { ...startColumn, items: newItems };
-        setColumns({ ...columns, [startColumnId]: newColumn });
-
-    } else { // 3. Si se mueve a una columna diferente
-        const startItems = Array.from(startColumn.items);
-        const [movedItem] = startItems.splice(source.index, 1);
-        const endItems = Array.from(endColumn.items);
-        endItems.splice(destination.index, 0, movedItem);
-
-        // Actualizar el estado de ambas columnas
-        setColumns({
-            ...columns,
-            [startColumnId]: { ...startColumn, items: startItems },
-            [endColumnId]: { ...endColumn, items: endItems },
-        });
-
-        // Actualizar el estado en el backend para que el cambio sea permanente
-        updateTaskOnServer(draggableId, { status: endColumnId });
+      const newItems = Array.from(startColumn.items);
+      const [reorderedItem] = newItems.splice(source.index, 1);
+      newItems.splice(destination.index, 0, reorderedItem);
+      setColumns({ ...columns, [startColumnId]: { ...startColumn, items: newItems } });
+    } else {
+      const startItems = Array.from(startColumn.items);
+      const [movedItem] = startItems.splice(source.index, 1);
+      const endItems = Array.from(endColumn.items);
+      endItems.splice(destination.index, 0, movedItem);
+      
+      setColumns({
+        ...columns,
+        [startColumnId]: { ...startColumn, items: startItems },
+        [endColumnId]: { ...endColumn, items: endItems },
+      });
+      
+      updateTaskOnServer(draggableId, { status: endColumnId });
     }
-};
+  };
 
-// --- Funciones para el Modal y Edición ---
-const handleOpenModal = () => setIsModalOpen(true);
-
-const handleCloseModal = () => {
+  const handleOpenModal = () => setIsModalOpen(true);
+  const handleCloseModal = () => {
     setIsModalOpen(false);
     setNewTaskText('');
-};
+  };
 
-const handleAddTask = async () => {
+  const handleAddTask = async () => {
     if (newTaskText.trim() === '') return;
     await addTaskOnServer(newTaskText.trim());
     await fetchAllTasks();
     handleCloseModal();
-};
+  };
 
-const handleUpdateTask = async (taskId, currentText) => {
+  const handleUpdateTask = async (taskId, currentText) => {
     const newText = prompt("Edita el texto de la tarea:", currentText);
     if (newText && newText.trim() !== '' && newText.trim() !== currentText) {
-        await updateTaskOnServer(taskId, { text: newText.trim() });
-        await fetchAllTasks();
+      await updateTaskOnServer(taskId, { text: newText.trim() });
+      await fetchAllTasks();
     }
-};
+  };
 
   return (
     <div className="app-container">
-      <h1 className="main-title">Tablero Kanban (con React)</h1>
-      <div className="kanban-board">
+      <h1 className="main-title">Tablero Kanban Extendido</h1>
+      <div className="kanban-board" style={{ overflowX: 'auto', paddingBottom: '1rem' }}>
         <DragDropContext onDragEnd={onDragEnd}>
           {Object.entries(columns).map(([columnId, column]) => (
             <Droppable droppableId={columnId} key={columnId}>
               {(provided) => (
-                <div className="kanban-column" ref={provided.innerRef} {...provided.droppableProps}>
+                <div className="kanban-column" ref={provided.innerRef} {...provided.droppableProps} style={{ minWidth: '300px' }}>
                   <div className="column-header">
-                    <h2>{column.name}</h2>
-                    {columnId === 'pending' && (
+                    <h2>{column.name || columnId}</h2>
+                    {columnId === firstColumnId && (
                       <button onClick={handleOpenModal} className="add-task-btn"><Plus size={20} /></button>
                     )}
                   </div>
                   <ul className="task-list">
-                    {column.items.map((item, index) => (
+                    {column.items && column.items.map((item, index) => (
                       <Draggable key={item.id} draggableId={String(item.id)} index={index}>
                         {(provided) => (
                           <li
