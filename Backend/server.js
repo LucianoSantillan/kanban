@@ -1,128 +1,118 @@
-// server.js
+// server.js - Versión FINAL con conexión a MySQL
 
-// 1. Importar las librerías necesarias
 const express = require('express');
 const cors = require('cors');
+const mysql = require('mysql2/promise');
 
-// 2. Inicializar la aplicación de Express
 const app = express();
-const PORT = 3000; // El puerto en el que correrá nuestro servidor
+const PORT = 3000;
 
-// 3. Middlewares
-// CORS: Permite que nuestro frontend (que corre en un origen diferente) haga peticiones a este backend.
+// Configuración de la conexión a la base de datos
+const dbConfig = {
+    host: 'localhost',
+    user: 'root',
+    password: '', // Contraseña vacía para XAMPP por defecto
+    database: 'kanban_db'
+};
+
+const pool = mysql.createPool(dbConfig);
+
 app.use(cors());
-// express.json(): Permite al servidor entender y procesar datos en formato JSON que vengan en las peticiones.
 app.use(express.json());
 
-// 4. Base de datos simulada en memoria
-// En una aplicación real, esto estaría en una base de datos como MongoDB, PostgreSQL, etc.
-// Cada tarea es un objeto con id, texto y estado ('pending' o 'inProgress').
-let tasks = [
-    { id: 1, text: 'Configurar el entorno de Node.js', status: 'inProgress' },
-    { id: 2, text: 'Crear el primer endpoint GET', status: 'pending' },
-    { id: 3, text: 'Conectar el frontend', status: 'pending' },
-];
-let nextTaskId = 4; // Para asignar IDs únicos a las nuevas tareas
+// --- ENDPOINTS DE LA API ---
 
-// 5. Definición de las Rutas (Endpoints) de nuestra API
-
-/**
- * [GET] /tasks - Obtener tareas con paginación.
- * Permite filtrar por estado (status) y paginar los resultados.
- * Query params:
- * - status: 'pending' o 'inProgress' (requerido)
- * - page: número de página (ej: 1, 2, 3...)
- * - limit: cuántos items por página
- */
-app.get('/tasks', (req, res) => {
-    const { status, page = 1, limit = 5 } = req.query;
-
-    if (!status) {
-        return res.status(400).json({ message: 'El parámetro "status" es requerido.' });
+// [GET] /tasks
+app.get('/tasks', async (req, res) => {
+    const { status, page = 1, limit = 100 } = req.query; // Aumentamos el límite
+    if (!status) return res.status(400).json({ message: 'El parámetro "status" es requerido.' });
+    try {
+        const [tasks] = await pool.query('SELECT * FROM tasks WHERE status = ?', [status]);
+        res.json({ tasks, totalPages: 1, currentPage: 1 }); // Simplificado por ahora
+    } catch (error) {
+        console.error('Error al obtener tareas:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    // Filtrar las tareas por el estado solicitado
-    const filteredTasks = tasks.filter(task => task.status === status);
-
-    // Calcular la paginación
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedTasks = filteredTasks.slice(startIndex, endIndex);
-    
-    const totalPages = Math.ceil(filteredTasks.length / limit);
-
-    // Enviar la respuesta
-    res.json({
-        tasks: paginatedTasks,
-        currentPage: parseInt(page),
-        totalPages: totalPages
-    });
 });
 
-/**
- * [POST] /tasks - Crear una nueva tarea.
- * La nueva tarea siempre se crea con estado 'pending'.
- */
-app.post('/tasks', (req, res) => {
+// [POST] /tasks
+app.post('/tasks', async (req, res) => {
     const { text } = req.body;
-
-    if (!text || text.trim() === '') {
-        return res.status(400).json({ message: 'El texto de la tarea no puede estar vacío.' });
+    if (!text || text.trim() === '') return res.status(400).json({ message: 'El texto no puede estar vacío.' });
+    try {
+        const [result] = await pool.query("INSERT INTO tasks (text, status) VALUES (?, 'To do')", [text]);
+        const [newTask] = await pool.query('SELECT * FROM tasks WHERE id = ?', [result.insertId]);
+        res.status(201).json(newTask[0]);
+    } catch (error) {
+        console.error('Error al crear la tarea:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    const newTask = {
-        id: nextTaskId++,
-        text: text,
-        status: 'pending'
-    };
-
-    tasks.push(newTask);
-    console.log('Tarea creada:', newTask);
-    res.status(201).json(newTask); // 201 = Creado exitosamente
 });
 
-/**
- * [PUT] /tasks/:id - Editar una tarea (principalmente para cambiar su estado).
- */
-app.put('/tasks/:id', (req, res) => {
+// [PUT] /tasks/:id
+app.put('/tasks/:id', async (req, res) => {
     const taskId = parseInt(req.params.id);
-    const { status, text } = req.body; // Aceptamos cambiar estado o texto
+    const { status, text } = req.body;
+    if (!status && !text) return res.status(400).json({ message: 'Se requiere "status" o "text" para actualizar.' });
+    try {
+        let query = 'UPDATE tasks SET';
+        const params = [];
+        if (text) {
+            query += ' text = ?';
+            params.push(text);
+        }
+        if (status) {
+            query += text ? ',' : '';
+            query += ' status = ?';
+            params.push(status);
+        }
+        query += ' WHERE id = ?';
+        params.push(taskId);
 
-    const taskIndex = tasks.findIndex(t => t.id === taskId);
-
-    if (taskIndex === -1) {
-        return res.status(404).json({ message: 'Tarea no encontrada.' }); // 404 = No encontrado
+        const [result] = await pool.query(query, params);
+        if (result.affectedRows === 0) return res.status(404).json({ message: 'Tarea no encontrada.' });
+        const [updatedTask] = await pool.query('SELECT * FROM tasks WHERE id = ?', [taskId]);
+        res.json(updatedTask[0]);
+    } catch (error) {
+        console.error('Error al actualizar la tarea:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    // Actualizar los campos que se hayan enviado
-    if (status) {
-        tasks[taskIndex].status = status;
-    }
-    if (text) {
-        tasks[taskIndex].text = text;
-    }
-
-    console.log('Tarea actualizada:', tasks[taskIndex]);
-    res.json(tasks[taskIndex]);
 });
 
-/**
- * [DELETE] /tasks/:id - Eliminar una tarea.
- */
-app.delete('/tasks/:id', (req, res) => {
-    const taskId = parseInt(req.params.id);
-    const initialLength = tasks.length;
-    tasks = tasks.filter(t => t.id !== taskId);
-
-    if (tasks.length === initialLength) {
-        return res.status(404).json({ message: 'Tarea no encontrada.' });
+// [POST] /register
+app.post('/register', async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
+    try {
+        const [result] = await pool.query('INSERT INTO users (email, password) VALUES (?, ?)', [email, password]);
+        res.status(201).json({ id: result.insertId, email });
+    } catch (error) {
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'El email ya está registrado.' });
+        }
+        console.error('Error al registrar usuario:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
     }
-
-    console.log('Tarea eliminada, ID:', taskId);
-    res.status(204).send(); // 204 = Sin contenido (éxito pero no se devuelve nada)
 });
 
-// 6. Iniciar el servidor
+// [POST] /login
+app.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
+    try {
+        const [users] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+        if (users.length === 0 || users[0].password !== password) {
+            return res.status(401).json({ message: 'Email o contraseña incorrectos.' });
+        }
+        res.status(200).json({ message: 'Login exitoso!', user: { id: users[0].id, email: users[0].email } });
+    } catch (error) {
+        console.error('Error de login:', error);
+        res.status(500).json({ message: 'Error interno del servidor' });
+    }
+});
+
+
+// Iniciar el servidor
 app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`✅ Servidor corriendo en http://localhost:${PORT} y conectado a MySQL.`);
 });
