@@ -1,78 +1,57 @@
 import React, { useState } from 'react';
-
-// Estilos simples para que el formulario se vea ordenado
-const styles = {
-  container: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100vh',
-    fontFamily: 'sans-serif',
-    backgroundColor: '#f4f5f7',
-  },
-  form: {
-    backgroundColor: 'white',
-    padding: '40px',
-    borderRadius: '8px',
-    boxShadow: '0 4px_10px rgba(0,0,0,0.1)',
-    width: '100%',
-    maxWidth: '400px',
-  },
-  input: {
-    width: '100%',
-    padding: '10px',
-    marginBottom: '20px',
-    border: '1px solid #ccc',
-    borderRadius: '4px',
-    boxSizing: 'border-box',
-  },
-  button: {
-    width: '100%',
-    padding: '10px',
-    border: 'none',
-    borderRadius: '4px',
-    backgroundColor: '#007bff',
-    color: 'white',
-    fontWeight: 'bold',
-    cursor: 'pointer',
-  },
-};
+import { Link, useNavigate } from 'react-router-dom'; // Importamos 'useNavigate'
 
 function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const navigate = useNavigate(); // Inicializamos el hook para navegar
 
-  const handleSubmit = (event) => {
-    event.preventDefault(); // Evita que la página se recargue al enviar
-    console.log('Login intentado con:', { email, password });
-    alert(`Intento de login con Email: ${email}`);
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    setError('');
+
+    const response = await fetch('http://localhost:3000/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+        // SI EL LOGIN ES EXITOSO:
+        // 1. Guardamos una "llave" de sesión para que el "guardia" nos deje pasar.
+        localStorage.setItem('user-token', 'aqui_iria_un_token_real_del_backend'); 
+
+        // 2. Redirigimos al usuario al tablero.
+        navigate('/kanban');
+    } else {
+        setError(data.message); // Si falla, mostramos el error
+    }
   };
 
   return (
     <div style={styles.container}>
       <form style={styles.form} onSubmit={handleSubmit}>
         <h2>Iniciar Sesión</h2>
-        <input
-          type="email"
-          placeholder="Email"
-          style={styles.input}
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <input
-          type="password"
-          placeholder="Contraseña"
-          style={styles.input}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-        <button type="submit" style={styles.button}>
-          Entrar
-        </button>
+        {error && <p style={styles.error}>{error}</p>}
+        <input type="email" placeholder="Email" style={styles.input} value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <input type="password" placeholder="Contraseña" style={styles.input} value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <button type="submit" style={styles.button}>Entrar</button>
+        <p style={styles.linkText}>¿No tienes una cuenta? <Link to="/register">Regístrate</Link></p>
       </form>
     </div>
   );
 }
+
+const styles = {
+  container: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 60px)', fontFamily: 'sans-serif' },
+  form: { backgroundColor: 'white', padding: '40px', borderRadius: '8px', boxShadow: '0 4px 10px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px' },
+  input: { width: '100%', padding: '10px', marginBottom: '20px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' },
+  button: { width: '100%', padding: '10px', border: 'none', borderRadius: '4px', backgroundColor: '#007bff', color: 'white', fontWeight: 'bold', cursor: 'pointer' },
+  linkText: { textAlign: 'center', marginTop: '16px' },
+  error: { color: 'red', textAlign: 'center', marginBottom: '10px' }
+};
 
 export default LoginPage;
