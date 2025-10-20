@@ -1,12 +1,22 @@
-# React + Vite
+# Guía de Instalación y Pruebas del Proyecto Kanban
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+¡Hola Lucho! 👋
 
-Currently, two official plugins are available:
+Bienvenido al proyecto del tablero Kanban. Este documento contiene todo lo que necesitas para poner en marcha la aplicación en tu entorno local y verificar que todas las funcionalidades están operativas.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
+## 1. Requisitos Previos
 
-## Expanding the ESLint configuration
+Asegúrate de tener instalado el siguiente software en tu máquina:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+* **Node.js**: v18 o superior.
+* **Git**
+* **XAMPP**
+
+---
+## 2. Pasos de Instalación
+
+**Clonar el Repositorio:**
+```bash
+git clone [https://github.com/tu-usuario/kanban-project.git](https://github.com/tu-usuario/kanban-project.git)
+cd kanban-project

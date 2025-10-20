@@ -1,128 +1,142 @@
-// server.js
+// server.js - Versión FINAL con TypeORM, endpoints funcionales y seguridad de contraseñas
 
-// 1. Importar las librerías necesarias
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcrypt'); // <-- CAMBIO 1: Importamos bcrypt para hashear contraseñas
+const { AppDataSource } = require('./src/data-source');
 
-// 2. Inicializar la aplicación de Express
 const app = express();
-const PORT = 3000; // El puerto en el que correrá nuestro servidor
-
-// 3. Middlewares
-// CORS: Permite que nuestro frontend (que corre en un origen diferente) haga peticiones a este backend.
-app.use(cors());
-// express.json(): Permite al servidor entender y procesar datos en formato JSON que vengan en las peticiones.
+const PORT = 3000;
+app.use(cors({
+    origin: 'http://localhost:5173', // La URL de tu frontend
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 
-// 4. Base de datos simulada en memoria
-// En una aplicación real, esto estaría en una base de datos como MongoDB, PostgreSQL, etc.
-// Cada tarea es un objeto con id, texto y estado ('pending' o 'inProgress').
-let tasks = [
-    { id: 1, text: 'Configurar el entorno de Node.js', status: 'inProgress' },
-    { id: 2, text: 'Crear el primer endpoint GET', status: 'pending' },
-    { id: 3, text: 'Conectar el frontend', status: 'pending' },
-];
-let nextTaskId = 4; // Para asignar IDs únicos a las nuevas tareas
+AppDataSource.initialize()
+    .then(() => {
+        console.log("✅ Conexión a la base de datos establecida con TypeORM");
 
-// 5. Definición de las Rutas (Endpoints) de nuestra API
+        const taskRepository = AppDataSource.getRepository("Task");
+        const userRepository = AppDataSource.getRepository("User");
 
-/**
- * [GET] /tasks - Obtener tareas con paginación.
- * Permite filtrar por estado (status) y paginar los resultados.
- * Query params:
- * - status: 'pending' o 'inProgress' (requerido)
- * - page: número de página (ej: 1, 2, 3...)
- * - limit: cuántos items por página
- */
-app.get('/tasks', (req, res) => {
-    const { status, page = 1, limit = 5 } = req.query;
+        // --- ENDPOINTS DE LA API ---
 
-    if (!status) {
-        return res.status(400).json({ message: 'El parámetro "status" es requerido.' });
-    }
+        app.get('/tasks', async (req, res) => {
+            const { status } = req.query;
+            if (!status) return res.status(400).json({ message: 'El parámetro "status" es requerido.' });
+            try {
+                const tasks = await taskRepository.find({ where: { status } });
+                res.json({ tasks: tasks || [] });
+            } catch (error) {
+                console.error("Error en GET /tasks:", error);
+                res.status(500).json({ message: 'Error interno del servidor' });
+            }
+        });
 
-    // Filtrar las tareas por el estado solicitado
-    const filteredTasks = tasks.filter(task => task.status === status);
+        app.post('/tasks', async (req, res) => {
+            // CAMBIO 2: Aceptamos 'status' del body para más flexibilidad. Si no viene, usamos 'To do'.
+            const { text, status } = req.body;
+            if (!text || text.trim() === '') return res.status(400).json({ message: 'El texto no puede estar vacío.' });
+            try {
+                const newTask = taskRepository.create({ 
+                    text: text.trim(), 
+                    status: status || 'To do' 
+                });
+                const savedTask = await taskRepository.save(newTask);
+                // La respuesta ya era correcta, devolviendo el objeto creado. ¡Perfecto!
+                res.status(201).json(savedTask);
+            } catch (error) {
+                console.error("Error en POST /tasks:", error);
+                res.status(500).json({ message: 'Error interno del servidor' });
+            }
+        });
 
-    // Calcular la paginación
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
-    const paginatedTasks = filteredTasks.slice(startIndex, endIndex);
-    
-    const totalPages = Math.ceil(filteredTasks.length / limit);
+        app.put('/tasks/:id', async (req, res) => {
+            const taskId = parseInt(req.params.id);
+            try {
+                const task = await taskRepository.findOneBy({ id: taskId });
+                if (!task) return res.status(404).json({ message: 'Tarea no encontrada.' });
+                
+                taskRepository.merge(task, req.body);
+                const results = await taskRepository.save(task);
+                res.json(results);
+            } catch (error) {
+                console.error("Error en PUT /tasks/:id:", error);
+                res.status(500).json({ message: 'Error interno del servidor' });
+            }
+        });
 
-    // Enviar la respuesta
-    res.json({
-        tasks: paginatedTasks,
-        currentPage: parseInt(page),
-        totalPages: totalPages
-    });
-});
+        app.delete('/tasks/:id', async (req, res) => {
+            const taskId = parseInt(req.params.id);
+            try {
+                const deleteResult = await taskRepository.delete(taskId);
+                if (deleteResult.affected === 0) {
+                    return res.status(404).json({ message: 'Tarea no encontrada.' });
+                }
+                res.status(200).json({ message: 'Tarea eliminada correctamente.' });
+            } catch (error) {
+                console.error("Error en DELETE /tasks/:id:", error);
+                res.status(500).json({ message: 'Error interno del servidor' });
+            }
+        });
 
-/**
- * [POST] /tasks - Crear una nueva tarea.
- * La nueva tarea siempre se crea con estado 'pending'.
- */
-app.post('/tasks', (req, res) => {
-    const { text } = req.body;
+        app.post('/register', async (req, res) => {
+            const { email, password } = req.body;
+            if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
+            try {
+                // CAMBIO 3: Hasheamos la contraseña antes de guardarla
+                const saltRounds = 10;
+                const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    if (!text || text.trim() === '') {
-        return res.status(400).json({ message: 'El texto de la tarea no puede estar vacío.' });
-    }
+                const newUser = userRepository.create({ email, password: hashedPassword });
+                await userRepository.save(newUser);
+                
+                res.status(201).json({ id: newUser.id, email: newUser.email });
+            } catch (error) {
+                if (error.code === 'ER_DUP_ENTRY') {
+                    return res.status(409).json({ message: 'El email ya está registrado.' });
+                }
+                console.error("Error en POST /register:", error);
+                res.status(500).json({ message: 'Error interno del servidor' });
+            }
+        });
 
-    const newTask = {
-        id: nextTaskId++,
-        text: text,
-        status: 'pending'
-    };
+        app.post('/login', async (req, res) => {
+            const { email, password } = req.body;
+            if (!email || !password) return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
+            try {
+                const user = await userRepository.findOneBy({ email });
+                if (!user) {
+                    // Nota: Damos un mensaje genérico por seguridad
+                    return res.status(401).json({ message: 'Credenciales incorrectas.' });
+                }
 
-    tasks.push(newTask);
-    console.log('Tarea creada:', newTask);
-    res.status(201).json(newTask); // 201 = Creado exitosamente
-});
+                // CAMBIO 4: Comparamos la contraseña enviada con el hash guardado en la BD
+                const isPasswordCorrect = await bcrypt.compare(password, user.password);
 
-/**
- * [PUT] /tasks/:id - Editar una tarea (principalmente para cambiar su estado).
- */
-app.put('/tasks/:id', (req, res) => {
-    const taskId = parseInt(req.params.id);
-    const { status, text } = req.body; // Aceptamos cambiar estado o texto
+                if (!isPasswordCorrect) {
+                    return res.status(401).json({ message: 'Credenciales incorrectas.' });
+                }
 
-    const taskIndex = tasks.findIndex(t => t.id === taskId);
+                // Generamos un token simple (en un proyecto real, se usaría JWT)
+                const token = `user-token-${user.id}-${Date.now()}`;
+                
+                res.status(200).json({ 
+                    message: 'Login exitoso!', 
+                    token: token, // Enviamos el token al frontend
+                    user: { id: user.id, email: user.email } 
+                });
 
-    if (taskIndex === -1) {
-        return res.status(404).json({ message: 'Tarea no encontrada.' }); // 404 = No encontrado
-    }
+            } catch (error) {
+                console.error("Error en POST /login:", error);
+                res.status(500).json({ message: 'Error interno del servidor' });
+            }
+        });
 
-    // Actualizar los campos que se hayan enviado
-    if (status) {
-        tasks[taskIndex].status = status;
-    }
-    if (text) {
-        tasks[taskIndex].text = text;
-    }
-
-    console.log('Tarea actualizada:', tasks[taskIndex]);
-    res.json(tasks[taskIndex]);
-});
-
-/**
- * [DELETE] /tasks/:id - Eliminar una tarea.
- */
-app.delete('/tasks/:id', (req, res) => {
-    const taskId = parseInt(req.params.id);
-    const initialLength = tasks.length;
-    tasks = tasks.filter(t => t.id !== taskId);
-
-    if (tasks.length === initialLength) {
-        return res.status(404).json({ message: 'Tarea no encontrada.' });
-    }
-
-    console.log('Tarea eliminada, ID:', taskId);
-    res.status(204).send(); // 204 = Sin contenido (éxito pero no se devuelve nada)
-});
-
-// 6. Iniciar el servidor
-app.listen(PORT, () => {
-    console.log(`Servidor corriendo en http://localhost:${PORT}`);
-});
+        app.listen(PORT, () => {
+            console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
+        });
+    })
+    .catch((error) => console.log("❌ Error al conectar a la base de datos:", error));
